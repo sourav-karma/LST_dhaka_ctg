@@ -9,8 +9,8 @@ Map.centerObject(roi_dhaka,9);
 //collection over dmp image
 var l08_21 = ee.ImageCollection('LANDSAT/LC08/C01/T1_SR')
  .filterBounds(roi_dhaka)
- .filterDate('2021-11-01','2021-12-31') //change the year here to get LST from different year
- .filterMetadata('CLOUD_COVER', 'less_than', 5);
+ .filterDate('2021-03-01','2021-07-31') //change the year here to get LST from different year
+ .filterMetadata('CLOUD_COVER', 'less_than', 10);
 
 
 //reducing to median
