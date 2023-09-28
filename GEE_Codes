@@ -1,0 +1,193 @@
+// Load the shapefile as a feature collection.
+var roi_ctg = ee.FeatureCollection("projects/ee-karmakersourav/assets/chittagong_metropoliton");
+var roi_dhaka = ee.FeatureCollection("projects/ee-karmakersourav/assets/DMP_shapefile");
+
+//centering to roi
+//Map.addLayer(roi_dhaka);
+Map.centerObject(roi_dhaka,9);
+
+//collection over dmp image
+var l08_21 = ee.ImageCollection('LANDSAT/LC08/C01/T1_SR')
+ .filterBounds(roi_dhaka)
+ .filterDate('2021-11-01','2021-12-31') //change the year here to get LST from different year
+ .filterMetadata('CLOUD_COVER', 'less_than', 5);
+
+
+//reducing to median
+var l08_21_median = l08_21.median().clip(roi_dhaka); 
+var vizParams_rgb = { bands: ['B4', 'B3', 'B2'],min: 0, max: 3000, gamma: 1.4,};
+Map.addLayer(l08_21_median, vizParams_rgb, 'Dhaka_21_rgb');
+
+//ndvi calculation from reduced img
+{
+var ndvi_21 = l08_21_median.normalizedDifference(['B5', 'B4']).rename('NDVI').clip(roi_dhaka);
+var ndviParams = {min: -1, max: 1, palette: ['blue', 'white','green']};
+//print(ndvi_05_18,'ndvi_05_18');
+Map.addLayer(ndvi_21, ndviParams, 'ndvi_21');
+}
+
+//ndwi) 
+{
+var ndwi_21 = l08_21_median.normalizedDifference(['B3', 'B5']).rename('NDWI').clip(roi_dhaka);//
+var ndwiParams = {min: -1, max: 1, palette: ['blue', 'white','green']};
+//print(ndwi_05_18,'ndwi_05_18');
+Map.addLayer(ndwi_21, ndwiParams, 'ndwi_21');
+}
+
+
+//ndbi
+{
+var ndbi_21 = l08_21_median.normalizedDifference(['B6', 'B5']).rename('NDBI').clip(roi_dhaka);//
+var ndbiParams = {min: -1, max: 1, palette: ['blue', 'white','green']};
+//print(ndbi_05_18,'ndbi_05_18');
+Map.addLayer(ndbi_21, ndbiParams, 'ndbi_21');
+}
+
+//select thermal band 10(with brightness tempereature), no calculation 
+var thermal_L8_21 = l08_21_median.select('B10').multiply(0.1).clip(roi_dhaka);
+var b10Params = {min: 291.918, max: 302.382, palette: ['blue', 'white', 'green']};
+Map.addLayer(thermal_L8_21, b10Params, 'thermalband_21');
+
+
+// find the min and max of NDVI
+{
+var min_ndvi = ee.Number(ndvi_21.reduceRegion({
+reducer: ee.Reducer.min(),
+geometry: roi_dhaka,
+scale: 30,
+maxPixels: 1e9
+}).values().get(0));
+print(min_ndvi, 'min_ndvi');
+
+var max_ndvi = ee.Number(ndvi_21.reduceRegion({
+reducer: ee.Reducer.max(),
+geometry: roi_dhaka,
+scale: 30,
+maxPixels: 1e9
+}).values().get(0));
+print(max_ndvi, 'max_ndvi')
+}
+
+
+
+
+//fractional vegetation
+{
+var fv_21 =(ndvi_21.subtract(min_ndvi).divide(max_ndvi.subtract(min_ndvi))).pow(ee.Number(2)).rename('FV'); 
+//print(fv_05_18, 'fv');
+Map.addLayer(fv_21, {}, 'fractionalVegetation_21');
+}
+
+
+
+//Emissivity
+var a= ee.Number(0.004);
+var b= ee.Number(0.986);
+var EM_21=fv_21.multiply(a).add(b).rename('EMM');
+var imageVisParam3 = {min: 0.9865619146722164, max:0.989699971371314};
+Map.addLayer(EM_21, imageVisParam3,'EMM');
+
+
+//LST in Celsius Degree, put -273.15
+var LST_21 = thermal_L8_21.expression(
+'(Tb/(1 + (0.00115* (Tb / 1.438))*log(Ep)))-273.15', {
+'Tb': thermal_L8_21.select('B10'),
+'Ep': EM_21.select('EMM')
+}).rename('LST');
+
+
+//min max LST
+{
+var min_LST = ee.Number(LST_21.reduceRegion({
+reducer: ee.Reducer.min(),
+geometry: roi_dhaka,
+scale: 30,
+maxPixels: 1e9
+}).values().get(0));
+print(min_LST, 'minLST');
+
+var max_LST = ee.Number(LST_21.reduceRegion({
+reducer: ee.Reducer.max(),
+geometry: roi_dhaka,
+scale: 30,
+maxPixels: 1e9
+}).values().get(0));
+print(max_LST, 'maxLST')
+}
+
+
+// adding final map layer
+Map.addLayer(LST_21, {min: 22.506160713762938, max:36.891048677281276, palette: [
+'040274', '040281', '0502a3', '0502b8', '0502ce', '0502e6',
+'0602ff', '235cb1', '307ef3', '269db1', '30c8e2', '32d3ef',
+'3be285', '3ff38f', '86e26f', '3ae237', 'b5e22e', 'd6e21f',
+'fff705', 'ffd611', 'ffb613', 'ff8b13', 'ff6e08', 'ff500d',
+'ff0000', 'de0101', 'c21301', 'a71001', '911003'
+]},'LST');
+
+
+// Exporting LST, NDVI, NDWI, NDBI to drive for customized visualization
+Export.image.toDrive({
+  image: LST_21, //chnage the image here
+  description: 'Dhaka_LST_21',
+  folder: "Project_DHAKA",
+  scale: 30,
+  region: roi_dhaka,
+  fileFormat: 'GeoTIFF',
+  formatOptions: {
+    cloudOptimized: true
+  }
+});
+
+
+
+//Now we need to sample raster for each point of our multiple rasters. 
+//for this 500 centroid points are created and uploaded as a feature collection
+
+var roi500 = ee.FeatureCollection("projects/ee-karmakersourav/assets/500m_grid_centroid_dhaka");
+
+
+
+// Load the raster images
+var lstImage = LST_21;
+var ndviImage = ndvi_21;
+var ndwiImage = ndwi_21;
+var ndbiImage = ndbi_21;
+
+// Function to extract raster values at points and add them as properties
+var extractValues = function(image, bandName) {
+  var sampledPoints = image.sampleRegions({
+    collection: roi500,
+    properties: ['id'],
+    scale: 30 // Adjust the scale as needed based on your raster resolution
+  });
+  
+  // Add the band value as a property
+  var addBandProperty = function(feature) {
+    return feature.set(bandName, feature.get(bandName));
+  };
+  
+  return sampledPoints.map(addBandProperty);
+  
+};
+
+
+// Apply the function to each raster
+var sampledPointsLST = extractValues(LST_21, 'LST_21');
+var sampledPointsNDVI = extractValues(ndvi_21, 'ndvi_21');
+var sampledPointsNDWI = extractValues(ndwi_21, 'ndwi_21');
+var sampledPointsNDBI = extractValues(ndbi_21, 'ndbi_21');
+
+// print(sampledPointsLST)
+// print(sampledPointsNDVI)
+// print(sampledPointsNDWI)
+// print(sampledPointsNDBI)
+
+//Export to Google Drive as csv file
+Export.table.toDrive({
+  collection: sampledPointsLST,
+  folder: "Project_DHAKA",
+  description:'Dhaka500_lst_sampled_21',
+  fileFormat: 'csv'
+});
+
